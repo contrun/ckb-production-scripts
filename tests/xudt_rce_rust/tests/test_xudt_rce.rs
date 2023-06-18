@@ -966,6 +966,7 @@ fn test_simple_udt() {
         &mut rng,
     );
     let resolved_tx = build_resolved_tx(&data_loader, &tx);
+    dbg!(&tx, &resolved_tx);
     let verify_result =
         TransactionScriptsVerifier::new(&resolved_tx, &data_loader).verify(MAX_CYCLES);
     verify_result.expect("pass verification");
