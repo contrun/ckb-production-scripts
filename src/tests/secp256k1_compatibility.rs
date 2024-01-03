@@ -49,7 +49,7 @@ fn test_sighash_all_with_extra_witness_unlock() {
     let tx = tx
         .as_advanced_builder()
         .set_witnesses(vec![WitnessArgs::new_builder()
-            .lock(Some(Bytes::from(extract_witness)).pack())
+            .output_type(Some(Bytes::from(extract_witness)).pack())
             .build()
             .as_bytes()
             .pack()])
@@ -66,7 +66,7 @@ fn test_sighash_all_with_extra_witness_unlock() {
             .map(|w| {
                 WitnessArgs::new_unchecked(w.unpack())
                     .as_builder()
-                    // .extra(Bytes::from(vec![0]).pack())
+                    .output_type(Some(Bytes::from(vec![0])).pack())
                     .build()
             })
             .unwrap();
@@ -108,7 +108,7 @@ fn test_sighash_all_with_grouped_inputs_unlock() {
             .map(|w| {
                 WitnessArgs::new_unchecked(w.unpack())
                     .as_builder()
-                    .lock(Some(Bytes::from(vec![0])).pack())
+                    .output_type(Some(Bytes::from(vec![0])).pack())
                     .build()
             })
             .unwrap();
@@ -197,7 +197,7 @@ fn test_super_long_witness() {
     let sig = privkey.sign_recoverable(&message).expect("sign");
     let witness = WitnessArgs::new_builder()
         .lock(Some(Bytes::from(sig.serialize())).pack())
-        .lock(Some(super_long_message).pack())
+        .output_type(Some(super_long_message).pack())
         .build();
     let tx = tx
         .as_advanced_builder()
@@ -232,8 +232,7 @@ fn test_sighash_all_2_in_2_out_cycles() {
     let tx = sign_tx_by_input_group(tx, &privkey, 0, 1);
     let tx = sign_tx_by_input_group(tx, &privkey2, 1, 1);
     let cycles = verify_tx(data_loader, &tx, None);
-    dbg!(CONSUME_CYCLES, cycles);
-    // assert_eq!(CONSUME_CYCLES, cycles)
+    assert_eq!(CONSUME_CYCLES, cycles)
 }
 
 #[test]
@@ -283,12 +282,11 @@ fn test_sighash_all_witness_args_ambiguity() {
         .into_iter()
         .map(|witness| {
             let witness = WitnessArgs::new_unchecked(witness);
-            // witness.as_builder().build()
-            let data = witness.lock().clone();
+            let data = witness.output_type().clone();
             witness
                 .as_builder()
-                // .extra(Bytes::new().pack())
-                .output_type(data)
+                .output_type(Some(Bytes::new()).pack())
+                .input_type(data)
                 .build()
         })
         .collect();
