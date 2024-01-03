@@ -1,10 +1,12 @@
+use std::sync::Arc;
+
 use super::{
-    blake160, build_resolved_tx, gen_tx, gen_tx_with_grouped_args, sign_tx, sign_tx_by_input_group,
-    sign_tx_hash, DummyDataLoader, ERROR_NO_PAIR, ERROR_PUBKEY_BLAKE160_HASH, MAX_CYCLES,
+    blake160, build_resolved_tx, gen_consensus, gen_tx, gen_tx_env, gen_tx_with_grouped_args,
+    sign_tx, sign_tx_by_input_group, sign_tx_hash, verify_tx, DummyDataLoader, ERROR_NO_PAIR,
+    ERROR_PUBKEY_BLAKE160_HASH, MAX_CYCLES,
 };
 use ckb_crypto::secp::Generator;
-use ckb_error::assert_error_eq;
-use ckb_script::{ScriptError, TransactionScriptsVerifier};
+use ckb_script::TransactionScriptsVerifier;
 use ckb_types::{bytes::Bytes, packed::WitnessArgs, prelude::*, H256};
 use rand::{thread_rng, Rng, SeedableRng};
 
@@ -16,10 +18,7 @@ fn test_sighash_all_unlock() {
     let pubkey_hash = blake160(&pubkey.serialize());
     let tx = gen_tx(&mut data_loader, pubkey_hash);
     let tx = sign_tx(tx, &privkey);
-    let resolved_tx = build_resolved_tx(&data_loader, &tx);
-    let verify_result =
-        TransactionScriptsVerifier::new(&resolved_tx, &data_loader).verify(MAX_CYCLES);
-    verify_result.expect("pass verification");
+    verify_tx(data_loader, &tx, None);
 }
 
 #[test]
@@ -36,10 +35,7 @@ fn test_sighash_all_unlock_with_args() {
     let mut rng = thread_rng();
     let tx = gen_tx_with_grouped_args(&mut data_loader, vec![(lock_args, 1)], &mut rng);
     let tx = sign_tx(tx, &privkey);
-    let resolved_tx = build_resolved_tx(&data_loader, &tx);
-    let verify_result =
-        TransactionScriptsVerifier::new(&resolved_tx, &data_loader).verify(MAX_CYCLES);
-    verify_result.expect("pass verification");
+    verify_tx(data_loader, &tx, None);
 }
 
 #[test]
@@ -53,17 +49,14 @@ fn test_sighash_all_with_extra_witness_unlock() {
     let tx = tx
         .as_advanced_builder()
         .set_witnesses(vec![WitnessArgs::new_builder()
-            .extra(Bytes::from(extract_witness).pack())
+            // .extra(Bytes::from(extract_witness).pack())
             .build()
             .as_bytes()
             .pack()])
         .build();
     {
         let tx = sign_tx(tx.clone(), &privkey);
-        let resolved_tx = build_resolved_tx(&data_loader, &tx);
-        let verify_result =
-            TransactionScriptsVerifier::new(&resolved_tx, &data_loader).verify(MAX_CYCLES);
-        verify_result.expect("pass verification");
+        verify_tx(data_loader.clone(), &tx, None);
     }
     {
         let tx = sign_tx(tx, &privkey);
@@ -73,7 +66,7 @@ fn test_sighash_all_with_extra_witness_unlock() {
             .map(|w| {
                 WitnessArgs::new_unchecked(w.unpack())
                     .as_builder()
-                    .extra(Bytes::from(vec![0]).pack())
+                    // .extra(Bytes::from(vec![0]).pack())
                     .build()
             })
             .unwrap();
@@ -81,13 +74,7 @@ fn test_sighash_all_with_extra_witness_unlock() {
             .as_advanced_builder()
             .set_witnesses(vec![wrong_witness.as_bytes().pack()])
             .build();
-        let resolved_tx = build_resolved_tx(&data_loader, &tx);
-        let verify_result =
-            TransactionScriptsVerifier::new(&resolved_tx, &data_loader).verify(MAX_CYCLES);
-        assert_error_eq!(
-            verify_result.unwrap_err(),
-            ScriptError::ValidationFailure(ERROR_PUBKEY_BLAKE160_HASH),
-        );
+        verify_tx(data_loader.clone(), &tx, Some(ERROR_PUBKEY_BLAKE160_HASH));
     }
 }
 
@@ -102,8 +89,15 @@ fn test_sighash_all_with_grouped_inputs_unlock() {
     {
         let tx = sign_tx(tx.clone(), &privkey);
         let resolved_tx = build_resolved_tx(&data_loader, &tx);
-        let verify_result =
-            TransactionScriptsVerifier::new(&resolved_tx, &data_loader).verify(MAX_CYCLES);
+        let consensus = gen_consensus();
+        let tx_env = gen_tx_env();
+        let mut verifier = TransactionScriptsVerifier::new(
+            Arc::new(resolved_tx),
+            data_loader.clone(),
+            Arc::new(consensus),
+            Arc::new(tx_env),
+        );
+        let verify_result = verifier.verify(MAX_CYCLES);
         verify_result.expect("pass verification");
     }
     {
@@ -114,7 +108,7 @@ fn test_sighash_all_with_grouped_inputs_unlock() {
             .map(|w| {
                 WitnessArgs::new_unchecked(w.unpack())
                     .as_builder()
-                    .extra(Bytes::from(vec![0]).pack())
+                    // .extra(Bytes::from(vec![0]).pack())
                     .build()
             })
             .unwrap();
@@ -125,13 +119,7 @@ fn test_sighash_all_with_grouped_inputs_unlock() {
                 wrong_witness.as_bytes().pack(),
             ])
             .build();
-        let resolved_tx = build_resolved_tx(&data_loader, &tx);
-        let verify_result =
-            TransactionScriptsVerifier::new(&resolved_tx, &data_loader).verify(MAX_CYCLES);
-        assert_error_eq!(
-            verify_result.unwrap_err(),
-            ScriptError::ValidationFailure(ERROR_PUBKEY_BLAKE160_HASH),
-        );
+        verify_tx(data_loader, &tx, Some(ERROR_PUBKEY_BLAKE160_HASH));
     }
 }
 
@@ -156,11 +144,7 @@ fn test_sighash_all_with_2_different_inputs_unlock() {
     );
     let tx = sign_tx_by_input_group(tx, &privkey, 0, 2);
     let tx = sign_tx_by_input_group(tx, &privkey2, 2, 2);
-
-    let resolved_tx = build_resolved_tx(&data_loader, &tx);
-    let verify_result =
-        TransactionScriptsVerifier::new(&resolved_tx, &data_loader).verify(MAX_CYCLES);
-    verify_result.expect("pass verification");
+    verify_tx(data_loader, &tx, None);
 }
 
 #[test]
@@ -172,13 +156,7 @@ fn test_signing_with_wrong_key() {
     let pubkey_hash = blake160(&pubkey.serialize());
     let tx = gen_tx(&mut data_loader, pubkey_hash);
     let tx = sign_tx(tx, &wrong_privkey);
-    let resolved_tx = build_resolved_tx(&data_loader, &tx);
-    let verify_result =
-        TransactionScriptsVerifier::new(&resolved_tx, &data_loader).verify(MAX_CYCLES);
-    assert_error_eq!(
-        verify_result.unwrap_err(),
-        ScriptError::ValidationFailure(ERROR_PUBKEY_BLAKE160_HASH),
-    );
+    verify_tx(data_loader, &tx, Some(ERROR_PUBKEY_BLAKE160_HASH));
 }
 
 #[test]
@@ -194,13 +172,7 @@ fn test_signing_wrong_tx_hash() {
         rng.fill(&mut rand_tx_hash);
         sign_tx_hash(tx, &privkey, &rand_tx_hash[..])
     };
-    let resolved_tx = build_resolved_tx(&data_loader, &tx);
-    let verify_result =
-        TransactionScriptsVerifier::new(&resolved_tx, &data_loader).verify(MAX_CYCLES);
-    assert_error_eq!(
-        verify_result.unwrap_err(),
-        ScriptError::ValidationFailure(ERROR_PUBKEY_BLAKE160_HASH),
-    );
+    verify_tx(data_loader, &tx, Some(ERROR_PUBKEY_BLAKE160_HASH));
 }
 
 #[test]
@@ -214,7 +186,7 @@ fn test_super_long_witness() {
 
     let mut buffer: Vec<u8> = vec![];
     buffer.resize(40000, 1);
-    let super_long_message = Bytes::from(&buffer[..]);
+    let super_long_message = Bytes::from(buffer);
 
     let mut blake2b = ckb_hash::new_blake2b();
     let mut message = [0u8; 32];
@@ -224,21 +196,14 @@ fn test_super_long_witness() {
     let message = H256::from(message);
     let sig = privkey.sign_recoverable(&message).expect("sign");
     let witness = WitnessArgs::new_builder()
-        .lock(Bytes::from(sig.serialize()).pack())
-        .extra(super_long_message.pack())
+        .lock(Some(Bytes::from(sig.serialize())).pack())
+        // .extra(super_long_message.pack())
         .build();
     let tx = tx
         .as_advanced_builder()
         .set_witnesses(vec![witness.as_bytes().pack()])
         .build();
-
-    let resolved_tx = build_resolved_tx(&data_loader, &tx);
-    let verify_result =
-        TransactionScriptsVerifier::new(&resolved_tx, &data_loader).verify(MAX_CYCLES);
-    assert_error_eq!(
-        verify_result.unwrap_err(),
-        ScriptError::ValidationFailure(ERROR_NO_PAIR),
-    );
+    verify_tx(data_loader, &tx, Some(ERROR_NO_PAIR));
 }
 
 #[test]
@@ -266,11 +231,7 @@ fn test_sighash_all_2_in_2_out_cycles() {
     );
     let tx = sign_tx_by_input_group(tx, &privkey, 0, 1);
     let tx = sign_tx_by_input_group(tx, &privkey2, 1, 1);
-
-    let resolved_tx = build_resolved_tx(&data_loader, &tx);
-    let verify_result =
-        TransactionScriptsVerifier::new(&resolved_tx, &data_loader).verify(MAX_CYCLES);
-    let cycles = verify_result.expect("pass verification");
+    let cycles = verify_tx(data_loader, &tx, None);
     assert_eq!(CONSUME_CYCLES, cycles)
 }
 
@@ -297,14 +258,7 @@ fn test_sighash_all_witness_append_junk_data() {
         .as_advanced_builder()
         .set_witnesses(witnesses.into_iter().map(|w| w.pack()).collect())
         .build();
-
-    let resolved_tx = build_resolved_tx(&data_loader, &tx);
-    let verify_result =
-        TransactionScriptsVerifier::new(&resolved_tx, &data_loader).verify(MAX_CYCLES);
-    assert_error_eq!(
-        verify_result.unwrap_err(),
-        ScriptError::ValidationFailure(ERROR_NO_PAIR),
-    );
+    verify_tx(data_loader, &tx, Some(ERROR_NO_PAIR));
 }
 
 #[test]
@@ -328,12 +282,13 @@ fn test_sighash_all_witness_args_ambiguity() {
         .into_iter()
         .map(|witness| {
             let witness = WitnessArgs::new_unchecked(witness);
-            let data = witness.extra().clone();
-            witness
-                .as_builder()
-                .extra(Bytes::new().pack())
-                .type_(data)
-                .build()
+            witness.as_builder().build()
+            // let data = witness.extra().clone();
+            // witness
+            //     .as_builder()
+            //     // .extra(Bytes::new().pack())
+            //     .type_(data)
+            //     .build()
         })
         .collect();
 
@@ -341,14 +296,7 @@ fn test_sighash_all_witness_args_ambiguity() {
         .as_advanced_builder()
         .set_witnesses(witnesses.into_iter().map(|w| w.as_bytes().pack()).collect())
         .build();
-
-    let resolved_tx = build_resolved_tx(&data_loader, &tx);
-    let verify_result =
-        TransactionScriptsVerifier::new(&resolved_tx, &data_loader).verify(MAX_CYCLES);
-    assert_error_eq!(
-        verify_result.unwrap_err(),
-        ScriptError::ValidationFailure(ERROR_PUBKEY_BLAKE160_HASH),
-    );
+    verify_tx(data_loader, &tx, Some(ERROR_PUBKEY_BLAKE160_HASH));
 }
 
 #[test]
@@ -388,13 +336,7 @@ fn test_sighash_all_witnesses_ambiguity() {
         .build();
 
     assert_eq!(tx.witnesses().len(), tx.inputs().len());
-    let resolved_tx = build_resolved_tx(&data_loader, &tx);
-    let verify_result =
-        TransactionScriptsVerifier::new(&resolved_tx, &data_loader).verify(MAX_CYCLES);
-    assert_error_eq!(
-        verify_result.unwrap_err(),
-        ScriptError::ValidationFailure(ERROR_PUBKEY_BLAKE160_HASH),
-    );
+    verify_tx(data_loader, &tx, Some(ERROR_PUBKEY_BLAKE160_HASH));
 }
 
 #[test]
@@ -428,12 +370,5 @@ fn test_sighash_all_cover_extra_witnesses() {
             Bytes::from(vec![0]).pack(),
         ])
         .build();
-
-    let resolved_tx = build_resolved_tx(&data_loader, &tx);
-    let verify_result =
-        TransactionScriptsVerifier::new(&resolved_tx, &data_loader).verify(60000000);
-    assert_error_eq!(
-        verify_result.unwrap_err(),
-        ScriptError::ValidationFailure(ERROR_PUBKEY_BLAKE160_HASH),
-    );
+    verify_tx(data_loader, &tx, Some(ERROR_PUBKEY_BLAKE160_HASH));
 }

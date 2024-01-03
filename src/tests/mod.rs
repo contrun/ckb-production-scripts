@@ -1,14 +1,16 @@
 mod anyone_can_pay;
 mod secp256k1_compatibility;
 
+use ckb_chain_spec::consensus::{Consensus, ConsensusBuilder};
 use ckb_crypto::secp::Privkey;
-use ckb_script::DataLoader;
+use ckb_script::{TransactionScriptsVerifier, TxVerifyEnv};
+use ckb_traits::{CellDataProvider, ExtensionProvider, HeaderProvider};
 use ckb_types::{
     bytes::Bytes,
     core::{
-        cell::{CellMeta, CellMetaBuilder, ResolvedTransaction},
-        BlockExt, Capacity, DepType, EpochExt, HeaderView, ScriptHashType, TransactionBuilder,
-        TransactionView,
+        cell::{CellMeta, CellMetaBuilder, ResolvedTransaction}, Capacity, Cycle, DepType, EpochNumberWithFraction, HeaderView,
+        ScriptHashType, TransactionBuilder, TransactionView,
+        hardfork::HardForks
     },
     packed::{
         self, Byte32, CellDep, CellInput, CellOutput, OutPoint, Script, WitnessArgs,
@@ -19,7 +21,7 @@ use ckb_types::{
 };
 use lazy_static::lazy_static;
 use rand::{thread_rng, Rng};
-use std::collections::HashMap;
+use std::{collections::HashMap, sync::Arc};
 
 pub const MAX_CYCLES: u64 = std::u64::MAX;
 pub const SIGNATURE_SIZE: usize = 65;
@@ -41,46 +43,56 @@ lazy_static! {
         Bytes::from(&include_bytes!("../../build/always_success")[..]);
 }
 
-#[derive(Default)]
+#[derive(Default, Clone)]
 pub struct DummyDataLoader {
-    pub cells: HashMap<OutPoint, (CellOutput, Bytes)>,
-    pub headers: HashMap<Byte32, HeaderView>,
-    pub epoches: HashMap<Byte32, EpochExt>,
+    pub cells: HashMap<OutPoint, (CellOutput, ckb_types::bytes::Bytes)>,
 }
 
 impl DummyDataLoader {
-    fn new() -> Self {
+    pub fn new() -> Self {
         Self::default()
     }
 }
 
-impl DataLoader for DummyDataLoader {
+impl CellDataProvider for DummyDataLoader {
     // load Cell Data
-    fn load_cell_data(&self, cell: &CellMeta) -> Option<(Bytes, Byte32)> {
+    fn load_cell_data(&self, cell: &CellMeta) -> Option<ckb_types::bytes::Bytes> {
         cell.mem_cell_data.clone().or_else(|| {
             self.cells
                 .get(&cell.out_point)
-                .map(|(_, data)| (data.clone(), CellOutput::calc_data_hash(&data)))
+                .map(|(_, data)| data.clone())
         })
     }
-    // load BlockExt
-    fn get_block_ext(&self, _hash: &Byte32) -> Option<BlockExt> {
-        unreachable!()
+
+    fn load_cell_data_hash(&self, cell: &CellMeta) -> Option<Byte32> {
+        self.load_cell_data(cell)
+            .map(|e| CellOutput::calc_data_hash(&e))
     }
 
-    // load header
-    fn get_header(&self, block_hash: &Byte32) -> Option<HeaderView> {
-        self.headers.get(block_hash).cloned()
+    fn get_cell_data(&self, _out_point: &OutPoint) -> Option<ckb_types::bytes::Bytes> {
+        None
     }
 
-    // load EpochExt
-    fn get_block_epoch(&self, block_hash: &Byte32) -> Option<EpochExt> {
-        self.epoches.get(block_hash).cloned()
+    fn get_cell_data_hash(&self, _out_point: &OutPoint) -> Option<Byte32> {
+        None
+    }
+}
+
+impl HeaderProvider for DummyDataLoader {
+    fn get_header(&self, _hash: &Byte32) -> Option<HeaderView> {
+        None
+    }
+}
+
+impl ExtensionProvider for DummyDataLoader {
+    fn get_block_extension(&self, _hash: &packed::Byte32) -> Option<packed::Bytes> {
+        None
     }
 }
 
 pub fn blake160(message: &[u8]) -> Bytes {
-    Bytes::from(&ckb_hash::blake2b_256(message)[..20])
+    let hash = ckb_hash::blake2b_256(message)[..20].to_vec();
+    Bytes::from(hash)
 }
 
 pub fn sign_tx(tx: TransactionView, key: &Privkey) -> TransactionView {
@@ -112,7 +124,7 @@ pub fn sign_tx_by_input_group(
                     buf.into()
                 };
                 let witness_for_digest =
-                    witness.clone().as_builder().lock(zero_lock.pack()).build();
+                    witness.clone().as_builder().lock(Some(zero_lock).pack()).build();
                 let witness_len = witness_for_digest.as_bytes().len() as u64;
                 blake2b.update(&witness_len.to_le_bytes());
                 blake2b.update(&witness_for_digest.as_bytes());
@@ -124,10 +136,10 @@ pub fn sign_tx_by_input_group(
                 });
                 blake2b.finalize(&mut message);
                 let message = H256::from(message);
-                let sig = key.sign_recoverable(&message).expect("sign");
+                let sig = Bytes::from(key.sign_recoverable(&message).expect("sign").serialize());
                 witness
                     .as_builder()
-                    .lock(sig.serialize().pack())
+                    .lock(Some(sig).pack())
                     .build()
                     .as_bytes()
                     .pack()
@@ -270,7 +282,7 @@ pub fn gen_tx_with_grouped_args<R: Rng>(
             let mut random_extra_witness = [0u8; 32];
             rng.fill(&mut random_extra_witness);
             let witness_args = WitnessArgsBuilder::default()
-                .extra(Bytes::from(random_extra_witness.to_vec()).pack())
+                // .extra(Bytes::from(random_extra_witness.to_vec()).pack())
                 .build();
             tx_builder = tx_builder
                 .input(CellInput::new(previous_out_point, 0))
@@ -290,10 +302,25 @@ pub fn sign_tx_hash(tx: TransactionView, key: &Privkey, tx_hash: &[u8]) -> Trans
     let message = H256::from(message);
     let sig = key.sign_recoverable(&message).expect("sign");
     let witness_args = WitnessArgsBuilder::default()
-        .lock(Bytes::from(sig.serialize()).pack())
+        .lock(Some(Bytes::from(sig.serialize())).pack())
         .build();
     tx.as_advanced_builder()
         .set_witnesses(vec![witness_args.as_bytes().pack()])
+        .build()
+}
+
+pub fn gen_tx_env() -> TxVerifyEnv {
+    let epoch = EpochNumberWithFraction::new(300, 0, 1);
+    let header = HeaderView::new_advanced_builder()
+        .epoch(epoch.pack())
+        .build();
+    TxVerifyEnv::new_commit(&header)
+}
+
+pub fn gen_consensus() -> Consensus {
+    let hardfork_switch = HardForks::new_dev();
+    ConsensusBuilder::default()
+        .hardfork_switch(hardfork_switch)
         .build()
 }
 
@@ -331,4 +358,27 @@ pub fn build_resolved_tx(
         resolved_inputs,
         resolved_dep_groups: vec![],
     }
+}
+
+pub fn verify_tx(data_loader: DummyDataLoader, tx: &TransactionView, error: Option<i8>) -> Cycle {
+    let resolved_tx = build_resolved_tx(&data_loader, tx);
+    let consensus = gen_consensus();
+    let tx_env = gen_tx_env();
+    let verifier = TransactionScriptsVerifier::new(
+        Arc::new(resolved_tx),
+        data_loader,
+        Arc::new(consensus),
+        Arc::new(tx_env),
+    );
+    let verify_result = verifier.verify(MAX_CYCLES);
+    match error {
+        Some(error_code) => {
+            assert!(verify_result.as_ref().is_err());
+            let error = format!("error code {}", error_code);
+            let error_message = verify_result.as_ref().unwrap_err().to_string();
+            assert!(error_message.contains(&error));
+        }
+        None => {}
+    };
+    verify_result.unwrap_or_default()
 }

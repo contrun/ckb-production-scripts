@@ -1,11 +1,11 @@
+use crate::tests::verify_tx;
+
 use super::{
-    blake160, build_resolved_tx, gen_tx, gen_tx_with_grouped_args, DummyDataLoader, ALWAYS_SUCCESS,
-    ANYONE_CAN_PAY, ERROR_DUPLICATED_INPUTS, ERROR_DUPLICATED_OUTPUTS, ERROR_ENCODING,
-    ERROR_NO_PAIR, ERROR_OUTPUT_AMOUNT_NOT_ENOUGH, MAX_CYCLES,
+    blake160, gen_tx, gen_tx_with_grouped_args,
+    DummyDataLoader, ALWAYS_SUCCESS, ANYONE_CAN_PAY, ERROR_DUPLICATED_INPUTS,
+    ERROR_DUPLICATED_OUTPUTS, ERROR_ENCODING, ERROR_NO_PAIR, ERROR_OUTPUT_AMOUNT_NOT_ENOUGH,
 };
 use ckb_crypto::secp::Generator;
-use ckb_error::assert_error_eq;
-use ckb_script::{ScriptError, TransactionScriptsVerifier};
 use ckb_types::{
     bytes::Bytes,
     core::ScriptHashType,
@@ -51,10 +51,7 @@ fn test_unlock_by_anyone() {
             .build()])
         .build();
 
-    let resolved_tx = build_resolved_tx(&data_loader, &tx);
-    let verifier = TransactionScriptsVerifier::new(&resolved_tx, &data_loader);
-    let verify_result = verifier.verify(MAX_CYCLES);
-    verify_result.expect("pass");
+    verify_tx(data_loader, &tx, None);
 }
 
 #[test]
@@ -78,13 +75,7 @@ fn test_put_output_data() {
         .set_outputs_data(vec![Bytes::from(vec![42u8]).pack()])
         .build();
 
-    let resolved_tx = build_resolved_tx(&data_loader, &tx);
-    let verifier = TransactionScriptsVerifier::new(&resolved_tx, &data_loader);
-    let verify_result = verifier.verify(MAX_CYCLES);
-    assert_error_eq!(
-        verify_result.unwrap_err(),
-        ScriptError::ValidationFailure(ERROR_ENCODING),
-    );
+    verify_tx(data_loader, &tx, Some(ERROR_ENCODING));
 }
 
 #[test]
@@ -112,13 +103,7 @@ fn test_wrong_output_args() {
             .build()])
         .build();
 
-    let resolved_tx = build_resolved_tx(&data_loader, &tx);
-    let verifier = TransactionScriptsVerifier::new(&resolved_tx, &data_loader);
-    let verify_result = verifier.verify(MAX_CYCLES);
-    assert_error_eq!(
-        verify_result.unwrap_err(),
-        ScriptError::ValidationFailure(ERROR_NO_PAIR),
-    );
+    verify_tx(data_loader, &tx, Some(ERROR_NO_PAIR));
 }
 
 #[test]
@@ -153,13 +138,7 @@ fn test_split_cell() {
         ])
         .build();
 
-    let resolved_tx = build_resolved_tx(&data_loader, &tx);
-    let verifier = TransactionScriptsVerifier::new(&resolved_tx, &data_loader);
-    let verify_result = verifier.verify(MAX_CYCLES);
-    assert_error_eq!(
-        verify_result.unwrap_err(),
-        ScriptError::ValidationFailure(ERROR_DUPLICATED_OUTPUTS),
-    );
+    verify_tx(data_loader, &tx, Some(ERROR_DUPLICATED_OUTPUTS));
 }
 
 #[test]
@@ -184,13 +163,7 @@ fn test_merge_cell() {
             .build()])
         .build();
 
-    let resolved_tx = build_resolved_tx(&data_loader, &tx);
-    let verifier = TransactionScriptsVerifier::new(&resolved_tx, &data_loader);
-    let verify_result = verifier.verify(MAX_CYCLES);
-    assert_error_eq!(
-        verify_result.unwrap_err(),
-        ScriptError::ValidationFailure(ERROR_DUPLICATED_INPUTS),
-    );
+    verify_tx(data_loader, &tx, Some(ERROR_DUPLICATED_INPUTS));
 }
 
 #[test]
@@ -214,13 +187,7 @@ fn test_insufficient_pay() {
             .build()])
         .build();
 
-    let resolved_tx = build_resolved_tx(&data_loader, &tx);
-    let verifier = TransactionScriptsVerifier::new(&resolved_tx, &data_loader);
-    let verify_result = verifier.verify(MAX_CYCLES);
-    assert_error_eq!(
-        verify_result.unwrap_err(),
-        ScriptError::ValidationFailure(ERROR_OUTPUT_AMOUNT_NOT_ENOUGH),
-    );
+    verify_tx(data_loader, &tx, Some(ERROR_OUTPUT_AMOUNT_NOT_ENOUGH));
 }
 
 #[test]
@@ -246,13 +213,7 @@ fn test_payment_not_meet_requirement() {
             .build()])
         .build();
 
-    let resolved_tx = build_resolved_tx(&data_loader, &tx);
-    let verifier = TransactionScriptsVerifier::new(&resolved_tx, &data_loader);
-    let verify_result = verifier.verify(MAX_CYCLES);
-    assert_error_eq!(
-        verify_result.unwrap_err(),
-        ScriptError::ValidationFailure(ERROR_OUTPUT_AMOUNT_NOT_ENOUGH),
-    );
+    verify_tx(data_loader, &tx, Some(ERROR_OUTPUT_AMOUNT_NOT_ENOUGH));
 }
 
 #[test]
@@ -276,13 +237,7 @@ fn test_no_pair() {
             .build()])
         .build();
 
-    let resolved_tx = build_resolved_tx(&data_loader, &tx);
-    let verifier = TransactionScriptsVerifier::new(&resolved_tx, &data_loader);
-    let verify_result = verifier.verify(MAX_CYCLES);
-    assert_error_eq!(
-        verify_result.unwrap_err(),
-        ScriptError::ValidationFailure(ERROR_NO_PAIR),
-    );
+    verify_tx(data_loader, &tx, Some(ERROR_NO_PAIR));
 }
 
 #[test]
@@ -308,14 +263,7 @@ fn test_overflow() {
             .build()])
         .build();
 
-    let resolved_tx = build_resolved_tx(&data_loader, &tx);
-    let verifier = TransactionScriptsVerifier::new(&resolved_tx, &data_loader);
-    let verify_result = verifier.verify(MAX_CYCLES);
-
-    assert_error_eq!(
-        verify_result.unwrap_err(),
-        ScriptError::ValidationFailure(ERROR_OUTPUT_AMOUNT_NOT_ENOUGH),
-    );
+    verify_tx(data_loader, &tx, Some(ERROR_OUTPUT_AMOUNT_NOT_ENOUGH));
 }
 
 #[test]
@@ -355,10 +303,7 @@ fn test_only_pay_ckb() {
         .set_outputs_data(vec![Bytes::from(44u128.to_le_bytes().to_vec()).pack()])
         .build();
 
-    let resolved_tx = build_resolved_tx(&data_loader, &tx);
-    let verifier = TransactionScriptsVerifier::new(&resolved_tx, &data_loader);
-    let verify_result = verifier.verify(MAX_CYCLES);
-    verify_result.unwrap();
+    verify_tx(data_loader, &tx, None);
 }
 
 #[test]
@@ -399,10 +344,7 @@ fn test_only_pay_udt() {
         .set_outputs_data(vec![Bytes::from(44u128.to_le_bytes().to_vec()).pack()])
         .build();
 
-    let resolved_tx = build_resolved_tx(&data_loader, &tx);
-    let verifier = TransactionScriptsVerifier::new(&resolved_tx, &data_loader);
-    let verify_result = verifier.verify(MAX_CYCLES);
-    verify_result.expect("pass");
+    verify_tx(data_loader, &tx, None);
 }
 
 #[test]
@@ -437,10 +379,7 @@ fn test_udt_unlock_by_anyone() {
         .set_outputs_data(vec![Bytes::from(44u128.to_le_bytes().to_vec()).pack()])
         .build();
 
-    let resolved_tx = build_resolved_tx(&data_loader, &tx);
-    let verifier = TransactionScriptsVerifier::new(&resolved_tx, &data_loader);
-    let verify_result = verifier.verify(MAX_CYCLES);
-    verify_result.expect("pass");
+    verify_tx(data_loader, &tx, None);
 }
 
 #[test]
@@ -479,14 +418,7 @@ fn test_udt_overflow() {
         .set_outputs_data(vec![Bytes::from(44u128.to_le_bytes().to_vec()).pack()])
         .build();
 
-    let resolved_tx = build_resolved_tx(&data_loader, &tx);
-    let verifier = TransactionScriptsVerifier::new(&resolved_tx, &data_loader);
-    let verify_result = verifier.verify(MAX_CYCLES);
-
-    assert_error_eq!(
-        verify_result.unwrap_err(),
-        ScriptError::ValidationFailure(ERROR_OUTPUT_AMOUNT_NOT_ENOUGH),
-    );
+    verify_tx(data_loader, &tx, Some(ERROR_OUTPUT_AMOUNT_NOT_ENOUGH));
 }
 
 #[test]
@@ -527,8 +459,5 @@ fn test_extended_udt() {
         .set_outputs_data(vec![Bytes::from(output_udt).pack()])
         .build();
 
-    let resolved_tx = build_resolved_tx(&data_loader, &tx);
-    let verifier = TransactionScriptsVerifier::new(&resolved_tx, &data_loader);
-    let verify_result = verifier.verify(MAX_CYCLES);
-    verify_result.expect("pass");
+    verify_tx(data_loader, &tx, None);
 }
