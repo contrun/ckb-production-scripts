@@ -371,6 +371,7 @@ pub fn verify_tx(data_loader: DummyDataLoader, tx: &TransactionView, error: Opti
         Arc::new(tx_env),
     );
     let verify_result = verifier.verify(MAX_CYCLES);
+    dbg!(&verify_result);
     match error {
         Some(error_code) => {
             assert!(verify_result.as_ref().is_err());
