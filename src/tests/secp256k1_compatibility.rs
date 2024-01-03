@@ -91,7 +91,7 @@ fn test_sighash_all_with_grouped_inputs_unlock() {
         let resolved_tx = build_resolved_tx(&data_loader, &tx);
         let consensus = gen_consensus();
         let tx_env = gen_tx_env();
-        let mut verifier = TransactionScriptsVerifier::new(
+        let verifier = TransactionScriptsVerifier::new(
             Arc::new(resolved_tx),
             data_loader.clone(),
             Arc::new(consensus),
@@ -208,7 +208,7 @@ fn test_super_long_witness() {
 
 #[test]
 fn test_sighash_all_2_in_2_out_cycles() {
-    const CONSUME_CYCLES: u64 = 3377980;
+    const CONSUME_CYCLES: u64 = 3354876;
 
     let mut data_loader = DummyDataLoader::new();
     let mut generator = Generator::non_crypto_safe_prng(42);
@@ -232,7 +232,7 @@ fn test_sighash_all_2_in_2_out_cycles() {
     let tx = sign_tx_by_input_group(tx, &privkey, 0, 1);
     let tx = sign_tx_by_input_group(tx, &privkey2, 1, 1);
     let cycles = verify_tx(data_loader, &tx, None);
-    assert_eq!(CONSUME_CYCLES, cycles)
+    assert_eq!(CONSUME_CYCLES, cycles);
 }
 
 #[test]
